@@ -2,6 +2,7 @@
   rf generator fot rx e tx radio iu2paq
 *********************************************************************************************************/
 //v4 rotation
+//V2.1 11/1
 
 //Libraries
 #include <Wire.h>                 //IDE Standard
@@ -24,18 +25,16 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT,
   OLED_MOSI, OLED_CLK, OLED_DC, OLED_RESET, OLED_CS);
 
 #define XT_CAL_F 120400 //Si5351 calibration factor, adjust to get exatcly 10MHz. Increasing this value will decreases the frequency and vice versa.
+
 #define tunestep 4 //Change the pin used by encoder push button if you want.
 #define buttonb 6
 #define pttext A3
 #define pttrele 7
-#define basefreq 7055000; //freq vda usare quando calibro vfo
-
+#define basefreq 7055000; 
 #define PLLB_FREQ    87600000000ULL
 Rotary r = Rotary(3, 2);
 
 //Si5351 si5351;
-//
-//
 Si5351 si5351(0x60); 
 uint32_t freq ;
 uint32_t freqold;
@@ -47,11 +46,14 @@ unsigned long time_now = 0; //millis display active
 int band = 80;
 int currB;
 int mode;
+
+boolean bfon=true;  //enable-disbale bfo on CLK1
+
 float pttv;
 boolean isRX = true;
 boolean ptton = false;
 boolean pttonp = false;
-String msg="Alberto Tilaro";
+String msg="I U 2 P A Q   73!";
 
 ISR(PCINT2_vect) {
   char result = r.process();
@@ -79,6 +81,8 @@ void set_frequency(short dir) {
       } else {
         if(band==1) {
          vfo = vfo + fstep; 
+         Serial.println(freq);
+         Serial.println(vfo);
         } else {
         freq = freq + fstep;
         check_freq(1);
@@ -89,7 +93,7 @@ void set_frequency(short dir) {
 }
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(19200);
   Wire.begin();
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   display.clearDisplay();
@@ -103,8 +107,6 @@ void setup() {
   pinMode(tunestep, INPUT_PULLUP);
   pinMode(buttonb, INPUT);
   pinMode(pttrele, OUTPUT);
-
-  //startup_text();
   
   delay(500);
 
@@ -114,12 +116,6 @@ void setup() {
     EEPROM.put(0, band);
   }
 
-  EEPROM.get(10, cal);
-  if (cal <= 0) {
-    cal = XT_CAL_F;
-    EEPROM.put(10, cal);
-  }
-
   EEPROM.get(20, freq);
   if (freq <= 0) {
     freq = 7000000;
@@ -127,20 +123,15 @@ void setup() {
     band = 40;
   }
 
-  EEPROM.get(30, mode);
-  if (mode <= 0) {
-    mode = 1;
-    EEPROM.put(30, mode);
-  }
-
   EEPROM.get(40, vfo);
    if (vfo <= 0) {
-  vfo = 4916570;
     EEPROM.put(40, vfo);
   }
-
-  set_band();
+  
+ set_band();
+ vfo = 4913250;
  
+ mode=2; //rx +tx 
   
 
   si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0, 0);
@@ -148,11 +139,11 @@ void setup() {
   
   si5351.set_correction(XT_CAL_F, SI5351_PLL_INPUT_XO);
   si5351.drive_strength(SI5351_CLK0,SI5351_DRIVE_2MA);
-  si5351.drive_strength(SI5351_CLK1,SI5351_DRIVE_2MA);
+   if (bfon) si5351.drive_strength(SI5351_CLK1,SI5351_DRIVE_2MA);
   si5351.output_enable(SI5351_CLK0,1);
-  si5351.output_enable(SI5351_CLK1,1);
+  if (bfon) si5351.output_enable(SI5351_CLK1,1);
+      si5351.output_enable(SI5351_CLK1,0);
   si5351.output_enable(SI5351_CLK2,0);
-  //si5351.set_pll(SI5351_PLL_FIXED, SI5351_PLLB);
 
   tunegen();
 
@@ -167,13 +158,14 @@ void setup() {
 }
 
 void loop() {
+  
   //read external ptt
   if (band >=10) {
   if (mode == 2) { //this is rxtx mode
     pttv = analogRead(pttext);
     pttv = map(pttv, 0, 1023, 0, 100);
     ptton = false;
-    if (pttv < 80) { //no tx on
+    if (pttv < 20) { //no tx on
       digitalWrite(pttrele, LOW); //rele off VRX on
       ptton = false;
     } else {
@@ -243,13 +235,6 @@ void loop() {
     
   }
 
-  if (cal != calp) {
-    time_now = millis();
-    tunegen();
-    calp = cal;
-    EEPROM.put(10, cal);
-  }
-
   if (vfo != vfop) {
     time_now = millis();
     tunegen();
@@ -273,21 +258,13 @@ void loop() {
     displayfreq();
     layout();
   }
-  Serial.print(vfo+"\n");
 }
 
-void tunegen() {
-
-  //si5351.init(SI5351_CRYSTAL_LOAD_8PF, 0, 0);
-  //si5351.set_correction(cal, SI5351_PLL_INPUT_XO);
-  //si5351.set_pll(SI5351_PLL_FIXED, SI5351_PLLA);
-
-  //vedere CLK0 CLK1 invertirli nel caso
-  if (band == 80 or band == 40) si5351.set_freq((freq + vfo) * 100, SI5351_CLK0);
+void tunegen() { 
+  if (band == 80 or band == 40) si5351.set_freq((freq+vfo) * 100, SI5351_CLK0);
   else si5351.set_freq((freq - vfo) * 100, SI5351_CLK0);
-  si5351.set_freq(vfo * 100, SI5351_CLK1);
+  if (bfon) si5351.set_freq(vfo * 100, SI5351_CLK1); //gab
   si5351.update_status();
-
 
 }
 
@@ -303,7 +280,7 @@ void displayfreq() {
 
   char buffer[15] = "";
   if (m < 1) {
-    display.setCursor(56, 1);  //-5
+    display.setCursor(56, 1); //-5
     sprintf(buffer, "%003d.%003d", k, h);
   } else if (m < 100) {
     display.setCursor(20, 1);
@@ -318,30 +295,30 @@ void displayfreq() {
 
 void setstep() {
   switch (stp) {
-    case 1:
-      stp = 2;
-      fstep = 1;
-      break;
-    case 2:
-      stp = 3;
-      fstep = 10;
-      break;
-    case 3:
-      stp = 4;
-      fstep = 100;
-      break;
-    case 4:
-      stp = 5;
-      fstep = 1000;
-      break;
-    case 5:
-      stp = 6;
-      fstep = 10000;
-      break;
-    case 6:
-      stp = 1;
-      fstep = 100000;
-      break;
+  case 1:
+    stp = 2;
+    fstep = 1;
+    break;
+  case 2:
+    stp = 3;
+    fstep = 10;
+    break;
+  case 3:
+    stp = 4;
+    fstep = 100;
+    break;
+  case 4:
+    stp = 5;
+    fstep = 1000;
+    break;
+  case 5:
+    stp = 6;
+    fstep = 10000;
+    break;
+  case 6:
+    stp = 1;
+    fstep = 100000;
+    break;
   }
 }
 
@@ -377,17 +354,12 @@ void layout() {
     if (band == 0)
       display.print("Calibr. Freq.");
     else {
-      if (band==2) {
-      if (mode == 1) mode = 2;
-      else mode = 1;
-        if (mode==1) display.print("Mode rx");
-       else display.print("Mode rtx");
-      EEPROM.put(30, mode);
-      }
       if (band==1) {
         freq=basefreq;
         tunegen();
-         
+        Serial.println(freq);
+        Serial.println(vfo
+        );
         display.print("Calibraz. IF");      
       }
     }
@@ -408,9 +380,7 @@ void layout() {
     display.setCursor(84, 10);
     display.print(vfo);
   }
-  display.setCursor(110, 24);
-  if (mode==1) display.print("rx");
-  else display.print("rtx");
+  
   display.display();
 }
 
@@ -468,25 +438,15 @@ void check_freq(int dir) {
     if (freq < fmi_) freq = freq + fstep;
 }
 
+/*
 void startup_text() {
   display.clearDisplay();
   display.setTextColor(WHITE);
   display.drawLine(0, 0, 127, 0, WHITE);
   display.setCursor(10, 1);
-  if (isRX) display.print("RX Firmware V1.01");
-  else
-    display.print("TX Firmware V1.2");
-  display.drawLine(0, 9, 127, 9, WHITE);
-  display.setCursor(0, 12);
- // display.print("Push encoder button");
- // display.setCursor(0, 20);
- // display.print("to change freq. step.");
-  display.display();
-  delay(3000);
-  display.clearDisplay();
-  display.setCursor(10, 10);
-  display.print(msg); //initial message
-  display.display();
-  delay(3000);
+  display.print("TX Firmware V1.4+");
+  
 }
+*/
+
 void setRotation(uint8_t rotation);
